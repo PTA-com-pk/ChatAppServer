@@ -1,51 +1,64 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
+const User = require('../models/User');
 
 const router = express.Router();
-
-// In-memory user storage (in production, use a database)
-const users = [];
 
 // Register
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
-    // Check if user already exists
-    const existingUser = users.find(u => u.email === email || u.username === username);
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists' });
+    // Validate input
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const minPasswordLength = parseInt(process.env.PASSWORD_MIN_LENGTH) || 6;
+    if (password.length < minPasswordLength) {
+      return res.status(400).json({ error: `Password must be at least ${minPasswordLength} characters long` });
+    }
 
-    // Create user
-    const user = {
-      id: uuidv4(),
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      $or: [{ email }, { username }]
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ 
+        error: existingUser.email === email ? 'Email already exists' : 'Username already exists'
+      });
+    }
+
+    // Create user (password will be hashed automatically by the model)
+    const user = new User({
       username,
       email,
-      password: hashedPassword,
-      createdAt: new Date()
-    };
+      password
+    });
 
-    users.push(user);
+    await user.save();
 
     // Generate JWT
     const token = jwt.sign(
-      { userId: user.id, username: user.username },
+      { userId: user._id, username: user.username },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
     res.status(201).json({
       message: 'User created successfully',
       token,
-      user: { id: user.id, username: user.username, email: user.email }
+      user: user.getPublicProfile()
     });
   } catch (error) {
+    console.error('Registration error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ error: errors.join(', ') });
+    }
+    
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -55,56 +68,89 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
     // Find user
-    const user = users.find(u => u.email === email);
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
     // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await user.comparePassword(password);
     if (!isValidPassword) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
+    // Update last seen
+    await user.updateLastSeen();
+
     // Generate JWT
     const token = jwt.sign(
-      { userId: user.id, username: user.username },
+      { userId: user._id, username: user.username },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
     res.json({
       message: 'Login successful',
       token,
-      user: { id: user.id, username: user.username, email: user.email }
+      user: user.getPublicProfile()
     });
   } catch (error) {
+    console.error('Login error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 // Get current user
-router.get('/me', (req, res) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+router.get('/me', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+    if (!token) {
+      return res.status(401).json({ error: 'Access token required' });
     }
 
-    const user = users.find(u => u.id === decoded.userId);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+    
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user: { id: user.id, username: user.username, email: user.email } });
-  });
+    res.json({ user: user.getPublicProfile() });
+  } catch (error) {
+    console.error('Get user error:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(403).json({ error: 'Token expired' });
+    }
+    
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get all users (for admin or debugging)
+router.get('/users', async (req, res) => {
+  try {
+    const users = await User.find({}, 'username email isOnline lastSeen createdAt')
+      .sort({ createdAt: -1 })
+      .limit(50);
+    
+    res.json({ users });
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 module.exports = router;
