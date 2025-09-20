@@ -19,7 +19,7 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ["https://chatappserver-psyf.onrender.com", "https://your-frontend-domain.com"] 
+      ? ["https://chatappserver-psyf.onrender.com", "http://192.168.1.10:8081"] 
       : ["http://localhost:3000", "http://localhost:19006", "exp://192.168.1.100:19000"],
     methods: ["GET", "POST"],
     credentials: true
@@ -36,7 +36,7 @@ server.headersTimeout = 125000;
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ["https://chatappserver-psyf.onrender.com", "https://your-frontend-domain.com"] 
+    ? ["https://chatappserver-psyf.onrender.com", "http://192.168.1.10:8081"] 
     : ["http://localhost:3000", "http://localhost:19006", "exp://192.168.1.100:19000"],
   credentials: true
 }));
