@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/chat-app';
+    const mongoURI = process.env.MONGODB_URI || 'mongodb+srv://muhammadnouman72321_db_user:i3SdFh7XuAj7Mw2m@rtn-circle.mqbnjzf.mongodb.net/?retryWrites=true&w=majority&appName=RTN-Circle';
     
     const options = {
       maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
